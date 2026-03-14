@@ -464,7 +464,7 @@ class CommonAndImageOpsTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             output_path = sender.make_output_path(temp_dir, prefix="shot")
 
-        self.assertRegex(Path(output_path).name, r"^shot_\d{8}_\d{6}_\d{6}\.png$")
+        self.assertRegex(Path(output_path).name, r"^shot_\d{8}_\d{6}_\d{6}\.jpg$")
 
     def test_safe_ratio_treats_invalid_baseline_as_neutral(self) -> None:
         self.assertEqual(sender.safe_ratio(10.0, None), 1.0)

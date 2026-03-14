@@ -59,7 +59,7 @@ def make_output_path(save_dir: str | Path, prefix: str = "screenshot") -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     output_dir = Path(save_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    return str(output_dir / f"{prefix}_{ts}.png")
+    return str(output_dir / f"{prefix}_{ts}.jpg")
 
 
 def append_log(text: str) -> None:

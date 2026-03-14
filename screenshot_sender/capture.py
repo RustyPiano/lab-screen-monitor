@@ -53,8 +53,12 @@ class ScreenCapturer:
     @staticmethod
     def save(frame: np.ndarray, save_path: str) -> None:
         require_dependency("cv2", cv2)
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        ok = cv2.imwrite(save_path, frame)
+        resolved_path = Path(save_path)
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        params = []
+        if resolved_path.suffix.lower() in {".jpg", ".jpeg"}:
+            params = [cv2.IMWRITE_JPEG_QUALITY, 85]
+        ok = cv2.imwrite(str(resolved_path), frame, params)
         if not ok:
             raise RuntimeError(f"保存图片失败: {save_path}")
 

@@ -4,6 +4,11 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 from .common import now_str
 from .image_ops import (
     annotate_frame,
@@ -62,8 +67,20 @@ class LaserSpotDetector:
         blurred = mean_blur_3x3(gray)
         normalized = percentile_normalize(blurred)
         peak_intensity = float(blurred.max()) if blurred.size else 0.0
-        threshold_value = float(max(normalized.max() * self.relative_threshold_factor, 180.0))
-        mask = normalized >= threshold_value
+        if cv2 is not None:
+            threshold_value, mask_u8 = cv2.threshold(
+                normalized,
+                0,
+                255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+            )
+            threshold_value = float(threshold_value)
+            kernel = np.ones((3, 3), dtype=np.uint8)
+            mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_OPEN, kernel)
+            mask = mask_u8 > 0
+        else:
+            threshold_value = float(max(normalized.max() * self.relative_threshold_factor, 180.0))
+            mask = normalized >= threshold_value
         coords = largest_connected_component(mask)
 
         debug_frame = self._build_debug_frame(gray, mask, coords)
@@ -126,6 +143,7 @@ class LaserSpotMonitor:
         self.minimum_area_ratio = 1.0 - area_drop_ratio_threshold
         self.alert_consecutive_frames = alert_consecutive_frames
         self.alert_cooldown_seconds = alert_cooldown_seconds
+        self.baseline_ema_alpha = 0.01
 
         self._baseline_area_samples: list[float] = []
         self._baseline_intensity_samples: list[float] = []
@@ -136,7 +154,12 @@ class LaserSpotMonitor:
 
     @property
     def baseline_ready(self) -> bool:
-        return self.baseline_area is not None and self.baseline_intensity is not None
+        return (
+            self.baseline_area is not None
+            and self.baseline_area > 0
+            and self.baseline_intensity is not None
+            and self.baseline_intensity > 0
+        )
 
     def process_camera_frame(
         self,
@@ -202,6 +225,7 @@ class LaserSpotMonitor:
                 and self._cooldown_elapsed(current_ts)
             ):
                 self.last_alert_timestamp = current_ts
+                self.consecutive_anomalies = 0
                 status = "alert"
                 should_alert = True
 
@@ -218,10 +242,20 @@ class LaserSpotMonitor:
             )
             return event, search_frame
 
+        was_anomaly = self.consecutive_anomalies > 0
         self.consecutive_anomalies = 0
+        if measurement.is_detected:
+            self.baseline_area = (
+                self.baseline_ema_alpha * measurement.spot_area
+                + (1.0 - self.baseline_ema_alpha) * self.baseline_area
+            )
+            self.baseline_intensity = (
+                self.baseline_ema_alpha * measurement.spot_sum_intensity
+                + (1.0 - self.baseline_ema_alpha) * self.baseline_intensity
+            )
         return SpotMonitorEvent(
-            status="normal",
-            reason="激光亮点正常",
+            status="recovered" if was_anomaly else "normal",
+            reason="激光亮点已恢复正常" if was_anomaly else "激光亮点正常",
             measurement=measurement,
             baseline_area=self.baseline_area,
             baseline_intensity=self.baseline_intensity,

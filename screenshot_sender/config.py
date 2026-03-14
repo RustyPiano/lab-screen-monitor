@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -76,6 +77,10 @@ def normalize_config_overrides(overrides: dict) -> dict:
         value = normalized.get(key)
         if value is None:
             continue
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(
+                f"{key} 必须是 [left, top, width, height] 数组，当前值: {value!r}"
+            )
         normalized[key] = tuple(int(part) for part in value)
     return normalized
 
@@ -116,8 +121,15 @@ def save_config_overrides(overrides: dict, config_path: Optional[Path | str] = N
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     current_overrides = {}
     if resolved_path.exists():
-        with open(resolved_path, "r", encoding="utf-8") as f:
-            current_overrides = json.load(f)
+        try:
+            with open(resolved_path, "r", encoding="utf-8") as f:
+                current_overrides = json.load(f)
+        except json.JSONDecodeError:
+            backup = resolved_path.with_suffix(".json.bak")
+            resolved_path.rename(backup)
+            logging.getLogger("screenshot_sender").warning(
+                f"配置文件损坏，已备份到 {backup}，将从空配置开始"
+            )
 
     current_overrides.update(overrides)
     serializable = {}
@@ -151,6 +163,11 @@ def detection_enabled(cfg: dict) -> bool:
 
 
 def validate_config(cfg: dict) -> None:
+    valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR"}
+    log_level = str(cfg.get("LOG_LEVEL", "INFO")).upper()
+    if log_level not in valid_levels:
+        raise ValueError(f"LOG_LEVEL 必须是 {valid_levels} 之一")
+
     provider = cfg.get("PUSH_PROVIDER")
     if provider not in {"feishu", "wecom"}:
         raise ValueError("PUSH_PROVIDER 只能是 feishu 或 wecom")
@@ -188,6 +205,12 @@ def validate_config(cfg: dict) -> None:
     validate_roi(cfg.get("ROI"), "ROI")
     validate_roi(cfg.get("CAMERA_ROI"), "CAMERA_ROI")
     validate_roi(cfg.get("SPOT_SEARCH_ROI"), "SPOT_SEARCH_ROI")
+
+    save_dir = Path(cfg.get("SAVE_DIR", DEFAULT_SCREENSHOT_DIR))
+    try:
+        save_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise ValueError(f"SAVE_DIR 路径无效或不可写: {save_dir}: {e}") from e
 
     camera_roi = cfg.get("CAMERA_ROI")
     search_roi = cfg.get("SPOT_SEARCH_ROI")

@@ -120,6 +120,18 @@ class ConfigOverrideTests(unittest.TestCase):
         self.assertEqual(runtime["CAMERA_ROI"], (11, 22, 33, 44))
         self.assertEqual(runtime["SPOT_SEARCH_ROI"], (5, 6, 7, 8))
 
+    def test_save_config_overrides_backs_up_invalid_json(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.local.json"
+            config_path.write_text("{broken", encoding="utf-8")
+
+            sender.save_config_overrides({"CAMERA_ROI": (1, 2, 3, 4)}, config_path=config_path)
+
+            backup_path = config_path.with_suffix(".json.bak")
+            self.assertTrue(backup_path.exists())
+            runtime = sender.load_runtime_config(config_path)
+            self.assertEqual(runtime["CAMERA_ROI"], (1, 2, 3, 4))
+
 
 class ConfigLoadingTests(unittest.TestCase):
     def test_explicit_config_path_has_priority_over_default_file(self) -> None:
@@ -177,6 +189,13 @@ class MessengerConfigTests(unittest.TestCase):
 
         self.assertIsInstance(messenger, sender.WecomMessenger)
 
+    def test_validate_config_rejects_invalid_log_level(self) -> None:
+        cfg = make_base_config()
+        cfg["LOG_LEVEL"] = "TRACE"
+
+        with self.assertRaisesRegex(ValueError, "LOG_LEVEL"):
+            sender.validate_config(cfg)
+
 
 class WecomMessengerTests(unittest.TestCase):
     def test_build_image_payload_contains_base64_and_md5(self) -> None:
@@ -228,16 +247,29 @@ class CliTests(unittest.TestCase):
 
             messenger = MagicMock()
             frame = np.zeros((10, 10, 3), dtype=np.uint8)
+            capturer = MagicMock()
+            capturer.__enter__.return_value = capturer
+            capturer.__exit__.return_value = None
+            capturer.capture.return_value = frame
 
             with patch.object(sender_app, "setup_logging", return_value=temp_root / "sender.log"):
                 with patch.object(sender_app, "build_messenger", return_value=messenger):
-                    with patch.object(sender_app.ScreenCapturer, "capture", return_value=frame):
+                    with patch.object(sender_app, "ScreenCapturer", return_value=capturer):
                         with patch.object(sender_app.ScreenCapturer, "save", return_value=None):
                             exit_code = sender.main(["--once", "--config", str(config_path)])
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(messenger.send_image.call_count, 1)
         self.assertEqual(messenger.send_text.call_count, 1)
+
+    def test_build_detection_note_skips_detection_in_single_shot_mode(self) -> None:
+        cfg = make_base_config()
+        cfg["CAMERA_ROI"] = (0, 0, 10, 10)
+        cfg["SPOT_SEARCH_ROI"] = (0, 0, 5, 5)
+
+        note = sender_app.build_detection_note(cfg, np.zeros((10, 10, 3), dtype=np.uint8))
+
+        self.assertEqual(note, "laser: single-shot mode (no baseline)")
 
     def test_main_check_returns_one_for_invalid_detection_config(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -337,7 +369,7 @@ class LaserSpotMonitorTests(unittest.TestCase):
         self.assertEqual(monitor.consecutive_anomalies, 1)
 
         event, _ = monitor.process_camera_frame(make_spot_frame(), now_timestamp=6.0)
-        self.assertEqual(event.status, "normal")
+        self.assertEqual(event.status, "recovered")
         self.assertEqual(monitor.consecutive_anomalies, 0)
 
         for ts in (7.0, 8.0):
@@ -366,6 +398,42 @@ class LaserSpotMonitorTests(unittest.TestCase):
             suppressed.append(event)
 
         self.assertTrue(all(not event.should_alert for event in suppressed))
+
+    def test_alert_resets_consecutive_counter(self) -> None:
+        monitor = build_monitor()
+        prime_baseline(monitor)
+
+        final_event = None
+        for ts in range(5, 8):
+            final_event, _ = monitor.process_camera_frame(
+                make_spot_frame(radius=0, peak=20),
+                now_timestamp=float(ts),
+            )
+
+        self.assertIsNotNone(final_event)
+        self.assertEqual(final_event.status, "alert")
+        self.assertEqual(final_event.consecutive_anomalies, 0)
+        self.assertEqual(monitor.consecutive_anomalies, 0)
+
+
+class CommonAndImageOpsTests(unittest.TestCase):
+    def test_make_output_path_includes_microseconds(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            output_path = sender.make_output_path(temp_dir, prefix="shot")
+
+        self.assertRegex(Path(output_path).name, r"^shot_\d{8}_\d{6}_\d{6}\.png$")
+
+    def test_safe_ratio_treats_invalid_baseline_as_neutral(self) -> None:
+        self.assertEqual(sender.safe_ratio(10.0, None), 1.0)
+        self.assertEqual(sender.safe_ratio(10.0, 0.0), 1.0)
+
+    def test_draw_rectangle_clips_out_of_bounds_roi(self) -> None:
+        frame = np.zeros((6, 6, 3), dtype=np.uint8)
+
+        result = sender.draw_rectangle(frame, (-2, -2, 5, 5), color=(255, 0, 0), thickness=1)
+
+        self.assertEqual(int(result[0, 0, 0]), 255)
+        self.assertEqual(result.shape, frame.shape)
 
 
 if __name__ == "__main__":

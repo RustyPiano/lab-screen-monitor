@@ -1,6 +1,10 @@
+import functools
+import logging
 import base64
 import hashlib
 import json
+import time
+from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -23,12 +27,40 @@ except ImportError:
 from .common import require_dependency
 
 
-class Messenger:
-    def send_text(self, text: str) -> None:
-        raise NotImplementedError
+logger = logging.getLogger("screenshot_sender")
 
+
+def retry(max_attempts: int = 3, base_delay: float = 2.0):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as exc:
+                    last_error = exc
+                    if attempt < max_attempts - 1:
+                        delay = base_delay * (2 ** attempt)
+                        logger.warning(
+                            f"推送失败 (第{attempt + 1}次): {exc}, {delay:.0f}秒后重试"
+                        )
+                        time.sleep(delay)
+            raise last_error
+
+        return wrapper
+
+    return decorator
+
+
+class Messenger(ABC):
+    @abstractmethod
+    def send_text(self, text: str) -> None:
+        pass
+
+    @abstractmethod
     def send_image(self, image_path: str) -> None:
-        raise NotImplementedError
+        pass
 
 
 class FeishuMessenger(Messenger):
@@ -52,6 +84,7 @@ class FeishuMessenger(Messenger):
         self.receive_id_type: Optional[str] = None
         self.receive_id: Optional[str] = None
 
+    @retry()
     def upload_image(self, image_path: str) -> str:
         with open(image_path, "rb") as f:
             request = (
@@ -83,6 +116,7 @@ class FeishuMessenger(Messenger):
             raise RuntimeError("飞书接收目标未配置")
         return self.receive_id_type, self.receive_id
 
+    @retry()
     def send_text(self, text: str) -> None:
         receive_id_type, receive_id = self._require_target()
         content = json.dumps({"text": text}, ensure_ascii=False)
@@ -107,6 +141,7 @@ class FeishuMessenger(Messenger):
                 f"发送文本失败: code={response.code}, msg={response.msg}, log_id={response.get_log_id()}"
             )
 
+    @retry()
     def send_image(self, image_path: str) -> None:
         receive_id_type, receive_id = self._require_target()
         image_key = self.upload_image(image_path)
@@ -150,6 +185,7 @@ class WecomMessenger(Messenger):
             },
         }
 
+    @retry()
     def _post_json(self, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib_request.Request(
@@ -164,8 +200,9 @@ class WecomMessenger(Messenger):
         except urllib_error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"企业微信请求失败: status={e.code}, body={detail}") from e
-        except urllib_error.URLError as e:
-            raise RuntimeError(f"企业微信请求失败: {e.reason}") from e
+        except (urllib_error.URLError, OSError) as e:
+            reason = getattr(e, "reason", str(e))
+            raise RuntimeError(f"企业微信请求失败: {reason}") from e
 
         try:
             result = json.loads(resp_body) if resp_body else {}

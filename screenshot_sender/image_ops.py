@@ -80,6 +80,16 @@ def percentile_normalize(gray: np.ndarray) -> np.ndarray:
 
 
 def largest_connected_component(mask: np.ndarray) -> np.ndarray:
+    if cv2 is not None:
+        mask_u8 = mask.astype(np.uint8)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_u8, connectivity=8)
+        if num_labels <= 1:
+            return np.empty((0, 2), dtype=np.int32)
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        best_label = 1 + int(np.argmax(areas))
+        ys, xs = np.where(labels == best_label)
+        return np.stack([ys, xs], axis=1).astype(np.int32)
+
     height, width = mask.shape
     visited = np.zeros_like(mask, dtype=bool)
     best_coords: list[Tuple[int, int]] = []
@@ -129,8 +139,14 @@ def draw_rectangle(
 ) -> np.ndarray:
     vis = frame.copy()
     left, top, width, height = roi
-    right = left + width
-    bottom = top + height
+    frame_height, frame_width = vis.shape[:2]
+    right = min(frame_width, left + width)
+    bottom = min(frame_height, top + height)
+    left = max(0, left)
+    top = max(0, top)
+
+    if left >= right or top >= bottom:
+        return vis
 
     vis[top:top + thickness, left:right] = color
     vis[max(top, bottom - thickness):bottom, left:right] = color
@@ -180,5 +196,5 @@ def resize_nearest(frame: np.ndarray, new_height: int, new_width: int) -> np.nda
 
 def safe_ratio(current: float, baseline: Optional[float]) -> float:
     if baseline is None or baseline <= 0:
-        return 0.0
+        return 1.0
     return current / baseline

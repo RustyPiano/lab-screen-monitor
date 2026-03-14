@@ -24,6 +24,12 @@ class ScreenCapturer:
         self.roi = roi
         self.sct = mss.mss()
 
+    def __enter__(self) -> "ScreenCapturer":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
     def capture(self) -> np.ndarray:
         require_dependency("cv2", cv2)
         if self.roi is None:
@@ -40,6 +46,9 @@ class ScreenCapturer:
 
         img = np.array(shot)
         return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+    def close(self) -> None:
+        self.sct.close()
 
     @staticmethod
     def save(frame: np.ndarray, save_path: str) -> None:
@@ -70,8 +79,8 @@ def run_roi_selector(cfg: dict, config_path: Path = CONFIG_OVERRIDE_PATH) -> Non
     require_dependency("mss", mss)
 
     validate_roi(cfg.get("ROI"), "ROI")
-    capturer = ScreenCapturer(cfg["ROI"])
-    frame = capturer.capture()
+    with ScreenCapturer(cfg["ROI"]) as capturer:
+        frame = capturer.capture()
 
     camera_roi = select_roi_from_frame(
         frame,

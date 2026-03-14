@@ -1,5 +1,6 @@
 import argparse
 import json
+import signal
 import time
 from pathlib import Path
 from typing import Optional
@@ -7,7 +8,15 @@ from typing import Optional
 import numpy as np
 
 from .capture import ScreenCapturer, run_roi_selector
-from .common import DEFAULT_LOG_PATH, append_log, get_logger, make_output_path, now_str, setup_logging
+from .common import (
+    DEFAULT_LOG_PATH,
+    append_log,
+    cleanup_old_files,
+    get_logger,
+    make_output_path,
+    now_str,
+    setup_logging,
+)
 from .config import (
     CONFIG_OVERRIDE_PATH,
     detection_enabled,
@@ -38,7 +47,8 @@ def check_runtime(cfg: dict) -> None:
     validate_config(cfg)
     build_messenger(cfg)
 
-    frame = ScreenCapturer(cfg["ROI"]).capture()
+    with ScreenCapturer(cfg["ROI"]) as capturer:
+        frame = capturer.capture()
     if detection_enabled(cfg):
         camera_frame = crop_frame(frame, cfg["CAMERA_ROI"], "CAMERA_ROI")
         crop_frame(camera_frame, cfg["SPOT_SEARCH_ROI"], "SPOT_SEARCH_ROI")
@@ -98,25 +108,14 @@ def send_scheduled_screenshot(
 
     messenger.send_image(image_path)
 
-    append_log(cfg["SAVE_DIR"], f"已发送截图: {image_path}")
+    append_log(f"已发送截图: {image_path}")
 
 
 def build_detection_note(cfg: dict, frame: np.ndarray) -> str:
+    del frame
     if not detection_enabled(cfg):
         return "laser: detection disabled"
-
-    camera_frame = crop_frame(frame, cfg["CAMERA_ROI"], "CAMERA_ROI")
-    monitor = LaserSpotMonitor(
-        detector=LaserSpotDetector(),
-        search_roi=cfg["SPOT_SEARCH_ROI"],
-        baseline_init_frames=cfg["BASELINE_INIT_FRAMES"],
-        intensity_drop_ratio_threshold=cfg["INTENSITY_DROP_RATIO_THRESHOLD"],
-        area_drop_ratio_threshold=cfg["AREA_DROP_RATIO_THRESHOLD"],
-        alert_consecutive_frames=cfg["ALERT_CONSECUTIVE_FRAMES"],
-        alert_cooldown_seconds=cfg["ALERT_COOLDOWN_SECONDS"],
-    )
-    event, _ = monitor.process_camera_frame(camera_frame)
-    return f"laser: {event.status}"
+    return "laser: single-shot mode (no baseline)"
 
 
 def send_alert(
@@ -133,20 +132,22 @@ def send_alert(
     messenger.send_image(alert_path)
 
     append_log(
-        cfg["SAVE_DIR"],
-        (
-            "激光点异常报警: "
-            f"{event.reason}, intensity_ratio={event.intensity_ratio}, area_ratio={event.area_ratio}, "
-            f"image={alert_path}"
-        ),
+        "激光点异常报警: "
+        f"{event.reason}, intensity_ratio={event.intensity_ratio}, area_ratio={event.area_ratio}, "
+        f"image={alert_path}"
     )
+
+
+def send_recovery_notification(messenger: Messenger) -> None:
+    messenger.send_text(f"激光亮点已恢复正常\n时间: {now_str()}")
 
 
 def run_once(cfg: dict) -> None:
     validate_config(cfg)
 
     messenger = build_messenger(cfg)
-    frame = ScreenCapturer(cfg["ROI"]).capture()
+    with ScreenCapturer(cfg["ROI"]) as capturer:
+        frame = capturer.capture()
     detection_note = build_detection_note(cfg, frame)
     send_scheduled_screenshot(messenger, frame, cfg, detection_note)
 
@@ -180,8 +181,6 @@ def run_sender(cfg: dict) -> None:
     validate_config(cfg)
 
     messenger = build_messenger(cfg)
-    capturer = ScreenCapturer(cfg["ROI"])
-
     monitor = None
     latest_detection_note = "laser: detection disabled"
     last_detection_status = None
@@ -197,62 +196,82 @@ def run_sender(cfg: dict) -> None:
         )
         latest_detection_note = "laser: warming up"
 
-    append_log(cfg["SAVE_DIR"], "程序启动")
-    append_log(
-        cfg["SAVE_DIR"],
-        "激光点检测状态: 已启用" if monitor is not None else "激光点检测状态: 未启用",
-    )
+    append_log("程序启动")
+    append_log("激光点检测状态: 已启用" if monitor is not None else "激光点检测状态: 未启用")
+    cleanup_old_files(cfg["SAVE_DIR"])
 
     next_screenshot_at = time.monotonic()
     next_detect_at = time.monotonic() if monitor is not None else float("inf")
+    shutdown = False
+    capture_fail_count = 0
+    max_capture_backoff = 60
 
-    while True:
-        now_monotonic = time.monotonic()
-        due_screenshot = now_monotonic >= next_screenshot_at
-        due_detect = monitor is not None and now_monotonic >= next_detect_at
+    def handle_signal(signum, frame) -> None:
+        del signum, frame
+        nonlocal shutdown
+        shutdown = True
 
-        if not due_screenshot and not due_detect:
-            sleep_for = min(next_screenshot_at, next_detect_at) - now_monotonic
-            time.sleep(max(0.2, min(1.0, sleep_for)))
-            continue
+    try:
+        signal.signal(signal.SIGINT, handle_signal)
+        signal.signal(signal.SIGTERM, handle_signal)
+    except ValueError:
+        pass
 
-        logger = get_logger()
+    with ScreenCapturer(cfg["ROI"]) as capturer:
+        while not shutdown:
+            now_monotonic = time.monotonic()
+            due_screenshot = now_monotonic >= next_screenshot_at
+            due_detect = monitor is not None and now_monotonic >= next_detect_at
 
-        try:
-            frame = capturer.capture()
-        except Exception as e:
-            err = f"截图失败: {e}"
-            logger.error(err)
-            time.sleep(1)
-            continue
+            if not due_screenshot and not due_detect:
+                sleep_for = min(next_screenshot_at, next_detect_at) - now_monotonic
+                time.sleep(max(0.2, min(1.0, sleep_for)))
+                continue
 
-        if due_detect and monitor is not None:
+            logger = get_logger()
+
             try:
-                camera_frame = crop_frame(frame, cfg["CAMERA_ROI"], "CAMERA_ROI")
-                event, _ = monitor.process_camera_frame(camera_frame)
-                latest_detection_note = f"laser: {event.status}"
-
-                if event.status != last_detection_status:
-                    append_log(cfg["SAVE_DIR"], f"激光点状态变更: {event.status} - {event.reason}")
-                    last_detection_status = event.status
-
-                if event.should_alert:
-                    send_alert(messenger, cfg, camera_frame, event)
+                frame = capturer.capture()
+                capture_fail_count = 0
             except Exception as e:
-                err = f"激光点检测失败: {e}"
-                logger.error(err)
-                latest_detection_note = "laser: error"
-            finally:
-                next_detect_at = time.monotonic() + cfg["DETECT_INTERVAL_SECONDS"]
+                capture_fail_count += 1
+                backoff = min(max_capture_backoff, 2 ** capture_fail_count)
+                logger.error(f"截图失败 (第{capture_fail_count}次): {e}, {backoff}秒后重试")
+                time.sleep(backoff)
+                continue
 
-        if due_screenshot:
-            try:
-                send_scheduled_screenshot(messenger, frame, cfg, latest_detection_note)
-            except Exception as e:
-                err = f"发送失败: {e}"
-                logger.error(err)
-            finally:
-                next_screenshot_at = time.monotonic() + cfg["INTERVAL_SECONDS"]
+            if due_detect and monitor is not None:
+                try:
+                    camera_frame = crop_frame(frame, cfg["CAMERA_ROI"], "CAMERA_ROI")
+                    event, _ = monitor.process_camera_frame(camera_frame)
+                    latest_detection_note = f"laser: {event.status}"
+
+                    if event.status != last_detection_status:
+                        append_log(f"激光点状态变更: {event.status} - {event.reason}")
+                        last_detection_status = event.status
+
+                    if event.should_alert:
+                        send_alert(messenger, cfg, camera_frame, event)
+                    elif event.status == "recovered":
+                        send_recovery_notification(messenger)
+                except Exception as e:
+                    err = f"激光点检测失败: {e}"
+                    logger.error(err)
+                    latest_detection_note = "laser: error"
+                finally:
+                    next_detect_at = time.monotonic() + cfg["DETECT_INTERVAL_SECONDS"]
+
+            if due_screenshot:
+                try:
+                    send_scheduled_screenshot(messenger, frame, cfg, latest_detection_note)
+                    cleanup_old_files(cfg["SAVE_DIR"])
+                except Exception as e:
+                    err = f"发送失败: {e}"
+                    logger.error(err)
+                finally:
+                    next_screenshot_at = time.monotonic() + cfg["INTERVAL_SECONDS"]
+
+    append_log("程序退出")
 
 
 def main(argv: Optional[list[str]] = None) -> int:

@@ -1,283 +1,166 @@
-# Windows 实验室截图监控交付包
+# Windows 实验室截图监控
 
-这个项目用于实验室值守场景：
+定时截图并推送到飞书或企业微信，可选监控相机画面中的激光亮点，亮点异常时自动报警。
 
-- 定时截图并推送到飞书或企业微信
-- 可选监控相机画面中的激光亮点
-- 亮点明显变暗、变小或消失时自动报警
+> 当前交付目标是 Windows 实验室电脑源码部署，不包含 exe、Windows 服务或自动启动配置。
 
-当前交付目标是 Windows 实验室电脑源码部署，不包含 exe、Windows 服务或自动启动配置。
+## 快速开始
 
-## 项目结构
+将项目目录复制到实验室电脑后，双击根目录的 **`安装.bat`**，按提示完成全部配置：
 
-- [`screenshot_sender`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/screenshot_sender)：主程序包
-- [`config.example.json`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/config.example.json)：配置模板
-- [`scripts/windows/install.ps1`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/install.ps1)：安装依赖
-- [`scripts/windows/check.bat`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/check.bat)：环境检查
-- [`scripts/windows/select_roi.bat`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/select_roi.bat)：框选 ROI
-- [`scripts/windows/send_once.bat`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/send_once.bat)：发送一次验收截图
-- [`scripts/windows/start.bat`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/start.bat)：正式启动
+```
+══════════════════════════════════════
+  自动截屏发送 - 安装向导
+══════════════════════════════════════
+
+[1/5] 检查 Python 环境...
+  √ Python 3.11.0
+
+[2/5] 配置推送设置
+  选择推送渠道：
+    1. 企业微信（推荐，配置简单）
+    2. 飞书
+  请输入 [1/2]：
+
+  企业微信 Webhook URL：...
+
+[3/5] 安装 Python 依赖...
+[4/5] 环境检查...
+[5/5] 可选操作
+  是否发送一次测试截图验收？ [Y/n]：
+
+══════════════════════════════════════════
+  安装完成！日常使用请双击根目录的 菜单.bat
+══════════════════════════════════════════
+```
+
+安装完成后，日常使用双击 **`菜单.bat`**：
+
+```
+╔══════════════════════════════════════╗
+║      自动截屏发送 - 操作菜单          ║
+╠══════════════════════════════════════╣
+║  1. 启动（正式运行）                  ║
+║  2. 环境检查                          ║
+║  3. 重新框选 ROI 区域                 ║
+║  4. 发送一次测试截图                  ║
+║  5. 查看日志                          ║
+║  6. 重新安装 / 修改配置               ║
+║  0. 退出                              ║
+╚══════════════════════════════════════╝
+```
 
 ## 环境要求
 
-- Windows 10/11
-- Python 3.10+
-- 有桌面会话的登录用户
-- 被监控机器允许截图
+- Windows 10 / 11
+- Python 3.10+（`py` 或 `python` 命令可用）
+- 有桌面会话的登录用户（锁屏状态下无法截图）
 
-注意：
+## 项目结构
 
-- 程序依赖桌面会话，锁屏、无桌面远程环境、某些权限受限场景下可能无法截图
-- ROI 框选依赖 OpenCV 窗口能力，Windows 安装脚本会安装带 GUI 的 `opencv-python`
-- 第一次部署建议在本机桌面环境直接操作 ROI 框选
-
-## 安装步骤
-
-1. 将项目目录复制到实验室电脑
-2. 打开 PowerShell，进入项目根目录
-3. 执行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
+```
+├── 安装.bat                    # 首次使用，双击运行
+├── 菜单.bat                    # 日常使用，双击运行
+├── config.example.json         # 配置模板（勿直接修改）
+├── config.local.json           # 实际配置（由安装向导生成，git 忽略）
+├── screenshot_sender/          # 主程序包
+└── scripts/windows/
+    ├── setup.ps1               # 安装向导（被 安装.bat 调用）
+    ├── menu.ps1                # 操作菜单（被 菜单.bat 调用）
+    ├── install.ps1             # 依赖安装
+    ├── check.bat               # 环境检查
+    ├── select_roi.bat          # 框选 ROI
+    ├── send_once.bat           # 发送一次测试截图
+    └── start.bat               # 正式启动
 ```
 
-如果你确定最终使用飞书，也可以显式安装飞书依赖：
+## 配置说明
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Provider feishu
-```
+安装向导会交互式填写并生成 `config.local.json`，通常不需要手动编辑。如需手动调整，参考下表：
 
-如果使用企业微信：
+### 推送渠道
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Provider wecom
-```
+| 字段 | 说明 |
+|------|------|
+| `PUSH_PROVIDER` | `wecom` 或 `feishu` |
+| `WECOM_WEBHOOK_URL` | 企业微信群机器人 Webhook 地址 |
+| `APP_ID` / `APP_SECRET` | 飞书应用凭证 |
+| `RECEIVE_ID_TYPE` | 飞书接收者类型：`chat_id`（群）或 `open_id`（个人） |
+| `RECEIVE_ID` | 飞书接收者 ID |
 
-## 配置文件
+### 截图设置
 
-1. 复制模板：
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `INTERVAL_SECONDS` | 定时截图间隔（秒） | `1800`（30 分钟）|
+| `TEXT_PREFIX` | 消息文本前缀 | `实验截图` |
+| `SAVE_DIR` | 截图本地保存目录 | `runtime/screenshots` |
+| `ROI` | 截图区域 `[left, top, width, height]`，`null` 为全屏 | `null` |
 
-```powershell
-Copy-Item .\config.example.json .\config.local.json
-```
+### 激光亮点检测（可选）
 
-2. 编辑 `config.local.json`
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `CAMERA_ROI` | 相机窗口区域（相对于 ROI）| `null` |
+| `SPOT_SEARCH_ROI` | 激光亮点搜索区域（相对于 CAMERA_ROI）| `null` |
+| `DETECT_INTERVAL_SECONDS` | 检测频率（秒）| `5` |
+| `INTENSITY_DROP_RATIO_THRESHOLD` | 亮度下降报警阈值 | `0.05` |
+| `AREA_DROP_RATIO_THRESHOLD` | 面积下降报警阈值 | `0.05` |
+| `ALERT_CONSECUTIVE_FRAMES` | 连续异常帧数才触发报警 | `3` |
+| `ALERT_COOLDOWN_SECONDS` | 报警冷却时间（秒）| `300` |
 
-推荐只改这几个字段：
-
-- `PUSH_PROVIDER`：`feishu` 或 `wecom`
-- `APP_ID` / `APP_SECRET` / `RECEIVE_ID_TYPE` / `RECEIVE_ID`：飞书使用
-- `WECOM_WEBHOOK_URL`：企业微信使用
-- `INTERVAL_SECONDS`：定时截图间隔
-- `SAVE_DIR`：截图落盘目录，默认 `runtime/screenshots`
-- `LOG_LEVEL`：建议先用 `INFO`
-
-ROI 相关字段：
-
-- `ROI`：整屏截图区域，可留 `null`
-- `CAMERA_ROI`：相机窗口区域
-- `SPOT_SEARCH_ROI`：激光亮点区域
-
-如果暂时不启用激光检测：
-
-- `CAMERA_ROI` 和 `SPOT_SEARCH_ROI` 都保持 `null`
-
-如果启用激光检测：
-
-- `CAMERA_ROI` 和 `SPOT_SEARCH_ROI` 必须同时配置
-
-## 首次部署流程
-
-1. 安装依赖
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
-```
-
-2. 复制并填写配置
-
-```powershell
-Copy-Item .\config.example.json .\config.local.json
-```
-
-3. 运行环境检查
-
-```bat
-scripts\windows\check.bat
-```
-
-检查会验证：
-
-- 配置是否合法
-- 推送渠道依赖是否可用
-- 截图能力是否可用
-- ROI 是否能在当前截图中正确裁切
-
-注意：`check.bat` 只验证截图和 ROI 配置合法性，不验证 ROI 框选窗口能力。真正框选时需要 `opencv-python`，不能使用 `opencv-python-headless`。
-
-4. 如果要启用激光检测，框选 ROI
-
-```bat
-scripts\windows\select_roi.bat
-```
-
-5. 发送一次验收截图
-
-```bat
-scripts\windows\send_once.bat
-```
-
-验收标准：
-
-- 群里收到一条文本和一张截图
-- 项目目录下生成 `runtime/sender.log`
-- 如果配置了 `SAVE_DIR`，截图文件落到对应目录
-
-6. 正式启动
-
-```bat
-scripts\windows\start.bat
-```
+启用激光检测时，`CAMERA_ROI` 和 `SPOT_SEARCH_ROI` 必须同时配置，可通过菜单选项 3 框选生成。
 
 ## 日常运维
 
-### 启动
+| 操作 | 方式 |
+|------|------|
+| 启动 | 双击 `菜单.bat` → 选 1 |
+| 停止 | 在运行窗口按 `Ctrl + C` |
+| 修改配置 | 双击 `菜单.bat` → 选 6 |
+| 重新框选 ROI | 双击 `菜单.bat` → 选 3 |
+| 查看日志 | 双击 `菜单.bat` → 选 5（用记事本打开）|
 
-```bat
-scripts\windows\start.bat
-```
-
-### 停止
-
-- 在运行窗口中按 `Ctrl + C`
-
-### 修改配置
-
-1. 停止程序
-2. 修改 `config.local.json`
-3. 如果改动了 ROI 或截图区域，重新执行：
-
-```bat
-scripts\windows\check.bat
-```
-
-### 重新框选 ROI
-
-```bat
-scripts\windows\select_roi.bat
-```
-
-### 查看日志
-
-默认日志文件：
-
-```text
-runtime/sender.log
-```
-
-日志会同时输出到终端和文件，启动时会打印：
-
-- 运行模式
-- 推送渠道
-- 截图间隔
-- 激光检测是否启用
-- 配置文件路径
-- 日志文件路径
+日志默认路径：`runtime/sender.log`
 
 ## 命令行接口
 
-项目正式入口是：
+高级用法，直接调用主程序：
 
 ```bash
-python -m screenshot_sender
+python -m screenshot_sender --config config.local.json           # 正式运行
+python -m screenshot_sender --config config.local.json --check   # 环境检查
+python -m screenshot_sender --config config.local.json --once    # 发送一次截图
+python -m screenshot_sender --config config.local.json --select-roi  # 框选 ROI
 ```
 
-支持的参数：
+## 常见问题
 
-- `--config <path>`：指定配置文件
-- `--check`：检查后退出
-- `--once`：发送一次截图后退出
-- `--select-roi`：交互式框选 ROI
+### 提示缺少依赖模块
 
-示例：
+重新运行安装：双击 `菜单.bat` → 选 6，或双击 `安装.bat`。
 
-```bash
-python -m screenshot_sender --config config.local.json --check
-python -m screenshot_sender --config config.local.json --once
-python -m screenshot_sender --config config.local.json --select-roi
-```
+如果使用飞书，确认安装时已选择渠道 2（飞书），飞书需要额外安装 `lark-oapi`。
 
-## 常见故障排查
+### `--check` 失败，提示 ROI 配置错误
 
-### 1. 提示缺少依赖模块
+`CAMERA_ROI` 和 `SPOT_SEARCH_ROI` 要么都为空（不启用激光检测），要么都有效。修改窗口布局后需重新框选：`菜单.bat` → 选 3。
 
-现象：
+### 可以启动，但收不到消息
 
-- `缺少依赖模块: mss`
-- `缺少依赖模块: cv2`
-- `缺少依赖模块: lark_oapi`
+1. 通过菜单选 4 发送一次测试截图，观察终端输出
+2. 检查 `PUSH_PROVIDER` 与填写的凭据是否匹配
+3. 查看 `runtime/sender.log` 中的详细错误
 
-处理：
+### 截图失败
 
-- 重新运行 `scripts\windows\install.ps1`
-- 如果是飞书，确认安装时使用了 `-Provider feishu`，或者 `config.local.json` 中的 `PUSH_PROVIDER` 已正确填写
+确认当前用户处于已登录桌面会话（程序运行期间不能锁屏）。
 
-### 2. `--check` 失败，提示 ROI 配置错误
+### 框选 ROI 时提示 OpenCV 窗口功能不可用
 
-现象：
-
-- `CAMERA_ROI 和 SPOT_SEARCH_ROI 必须同时配置`
-- `SPOT_SEARCH_ROI 超出图像范围`
-
-处理：
-
-- 两个 ROI 要么都为空，要么都有效
-- 修改窗口布局后需要重新运行 `select_roi.bat`
-
-### 3. 可以启动，但收不到消息
-
-处理：
-
-- 先运行 `send_once.bat`
-- 检查 `PUSH_PROVIDER` 是否与凭据匹配
-- 飞书检查 `APP_ID`、`APP_SECRET`、`RECEIVE_ID_TYPE`、`RECEIVE_ID`
-- 企业微信检查 `WECOM_WEBHOOK_URL`
-- 查看 `runtime/sender.log` 中的发送失败信息
-
-### 4. 截图失败
-
-处理：
-
-- 确认当前用户处于已登录桌面会话
-- 确认程序运行时没有锁屏
-- 在本机桌面环境重新执行 `check.bat`
-
-### 5. `select_roi.bat` 提示 OpenCV `cvShowImage` / `The function is not implemented`
-
-原因：
-
-- 当前环境安装的是 `opencv-python-headless`，没有窗口功能
-
-处理：
-
-- 重新运行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
-```
-
-- 该脚本现在会自动卸载 `opencv-python-headless` 并安装带 GUI 的 `opencv-python`
+当前安装的是 `opencv-python-headless`（无 GUI）。重新运行安装即可自动替换为带 GUI 的版本。
 
 ## 测试
-
-当前仓库包含单元测试，覆盖：
-
-- 激光亮点检测
-- 配置覆盖和默认回落
-- 推送渠道配置校验
-- CLI 的 `--check` / `--once` 基本行为
-
-运行方式：
 
 ```bash
 python -m unittest tests/test_laser_spot_monitor.py -v

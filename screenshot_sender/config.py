@@ -71,6 +71,11 @@ CONFIG_TEMPLATE_PATH = PROJECT_ROOT / "config.example.json"
 ROI_CONFIG_KEYS = ("ROI", "CAMERA_ROI", "SPOT_SEARCH_ROI")
 
 
+def load_json_file(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
 def normalize_config_overrides(overrides: dict) -> dict:
     normalized = dict(overrides)
     for key in ROI_CONFIG_KEYS:
@@ -105,8 +110,7 @@ def load_runtime_config(config_path: Optional[Path | str] = None) -> dict:
     if resolved_path is None or not resolved_path.exists():
         return dict(CONFIG)
 
-    with open(resolved_path, "r", encoding="utf-8") as f:
-        overrides = json.load(f)
+    overrides = load_json_file(resolved_path)
     return build_runtime_config(CONFIG, overrides)
 
 
@@ -122,8 +126,7 @@ def save_config_overrides(overrides: dict, config_path: Optional[Path | str] = N
     current_overrides = {}
     if resolved_path.exists():
         try:
-            with open(resolved_path, "r", encoding="utf-8") as f:
-                current_overrides = json.load(f)
+            current_overrides = load_json_file(resolved_path)
         except json.JSONDecodeError:
             backup = resolved_path.with_suffix(".json.bak")
             resolved_path.rename(backup)

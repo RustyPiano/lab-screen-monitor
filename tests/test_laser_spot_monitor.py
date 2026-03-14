@@ -157,6 +157,24 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertEqual(runtime["PUSH_PROVIDER"], sender.CONFIG["PUSH_PROVIDER"])
         self.assertEqual(runtime["SAVE_DIR"], sender.CONFIG["SAVE_DIR"])
 
+    def test_load_runtime_config_accepts_utf8_bom(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.local.json"
+            payload = json.dumps(
+                {
+                    "PUSH_PROVIDER": "wecom",
+                    "WECOM_WEBHOOK_URL": "https://example.invalid/wecom-webhook",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            config_path.write_text(payload, encoding="utf-8-sig")
+
+            runtime = sender.load_runtime_config(config_path)
+
+        self.assertEqual(runtime["PUSH_PROVIDER"], "wecom")
+        self.assertEqual(runtime["WECOM_WEBHOOK_URL"], "https://example.invalid/wecom-webhook")
+
 
 class MessengerConfigTests(unittest.TestCase):
     def test_validate_config_accepts_feishu_runtime_config(self) -> None:

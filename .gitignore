@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+.uv-cache/
+.vscode/
+__pycache__/
+*.pyc
+config.local.json
+feishu_screenshots/

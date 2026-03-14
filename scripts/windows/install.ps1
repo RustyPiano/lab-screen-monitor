@@ -1,9 +1,9 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [ValidateSet("auto", "feishu", "wecom")]
     [string]$Provider = "auto"
 )
+
+$ErrorActionPreference = "Stop"
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $configPath = Join-Path $projectRoot "config.local.json"

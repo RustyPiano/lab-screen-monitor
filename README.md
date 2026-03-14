@@ -28,7 +28,8 @@
 注意：
 
 - 程序依赖桌面会话，锁屏、无桌面远程环境、某些权限受限场景下可能无法截图
-- ROI 框选依赖 OpenCV 窗口能力，第一次部署建议在本机桌面环境直接操作
+- ROI 框选依赖 OpenCV 窗口能力，Windows 安装脚本会安装带 GUI 的 `opencv-python`
+- 第一次部署建议在本机桌面环境直接操作 ROI 框选
 
 ## 安装步骤
 
@@ -111,6 +112,8 @@ scripts\windows\check.bat
 - 推送渠道依赖是否可用
 - 截图能力是否可用
 - ROI 是否能在当前截图中正确裁切
+
+注意：`check.bat` 只验证截图和 ROI 配置合法性，不验证 ROI 框选窗口能力。真正框选时需要 `opencv-python`，不能使用 `opencv-python-headless`。
 
 4. 如果要启用激光检测，框选 ROI
 
@@ -248,6 +251,22 @@ python -m screenshot_sender --config config.local.json --select-roi
 - 确认当前用户处于已登录桌面会话
 - 确认程序运行时没有锁屏
 - 在本机桌面环境重新执行 `check.bat`
+
+### 5. `select_roi.bat` 提示 OpenCV `cvShowImage` / `The function is not implemented`
+
+原因：
+
+- 当前环境安装的是 `opencv-python-headless`，没有窗口功能
+
+处理：
+
+- 重新运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
+```
+
+- 该脚本现在会自动卸载 `opencv-python-headless` 并安装带 GUI 的 `opencv-python`
 
 ## 测试
 

@@ -41,9 +41,12 @@ else {
 $pythonExe = Join-Path $projectRoot ".venv\Scripts\python.exe"
 & $pythonExe -m pip install --upgrade pip setuptools wheel
 
+# ROI 框选依赖 OpenCV GUI 能力，Windows 交付包必须安装非 headless 版本。
+& $pythonExe -m pip uninstall -y opencv-python-headless | Out-Null
+
 $packages = @(
     "numpy",
-    "opencv-python-headless",
+    "opencv-python",
     "mss"
 )
 

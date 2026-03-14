@@ -39,7 +39,8 @@ else {
 }
 
 $pythonExe = Join-Path $projectRoot ".venv\Scripts\python.exe"
-& $pythonExe -m pip install --upgrade pip setuptools wheel
+$pipMirror = "-i https://pypi.tuna.tsinghua.edu.cn/simple"
+& $pythonExe -m pip install --upgrade pip setuptools wheel $pipMirror
 
 # ROI 框选依赖 OpenCV GUI 能力，Windows 交付包必须安装非 headless 版本。
 & $pythonExe -m pip uninstall -y opencv-python-headless | Out-Null
@@ -54,7 +55,7 @@ if ($Provider -eq "feishu") {
     $packages += "lark-oapi"
 }
 
-& $pythonExe -m pip install @packages
+& $pythonExe -m pip install $pipMirror @packages
 
 Write-Host ""
 Write-Host "安装完成。"

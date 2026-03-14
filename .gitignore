@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 config.local.json
 feishu_screenshots/
+runtime/

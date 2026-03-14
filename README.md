@@ -1,152 +1,265 @@
-# 自动截屏发送飞书
+# Windows 实验室截图监控交付包
 
-一个用于实验室值守的监控脚本。
+这个项目用于实验室值守场景：
 
-脚本会定时截取电脑屏幕并发送到飞书，同时支持对相机画面中的激光反光点做异常检测。如果亮点明显变暗、变小或直接消失，会立即报警，减少人工盯屏时间。
+- 定时截图并推送到飞书或企业微信
+- 可选监控相机画面中的激光亮点
+- 亮点明显变暗、变小或消失时自动报警
 
-## 功能
+当前交付目标是 Windows 实验室电脑源码部署，不包含 exe、Windows 服务或自动启动配置。
 
-- 定时截屏并发送到飞书
-- 可选的激光亮点异常检测
-- 连续多帧确认，降低瞬时噪声误报
-- 报警冷却时间，避免短时间重复刷屏
-- 支持交互式框选 ROI，不需要手动填写坐标
+## 项目结构
 
-## 依赖
+- [`screenshot_sender`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/screenshot_sender)：主程序包
+- [`config.example.json`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/config.example.json)：配置模板
+- [`scripts/windows/install.ps1`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/install.ps1)：安装依赖
+- [`scripts/windows/check.bat`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/check.bat)：环境检查
+- [`scripts/windows/select_roi.bat`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/select_roi.bat)：框选 ROI
+- [`scripts/windows/send_once.bat`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/send_once.bat)：发送一次验收截图
+- [`scripts/windows/start.bat`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/scripts/windows/start.bat)：正式启动
 
+## 环境要求
+
+- Windows 10/11
 - Python 3.10+
-- `numpy`
-- `opencv-python-headless`
-- `mss`
-- `lark-oapi`
+- 有桌面会话的登录用户
+- 被监控机器允许截图
 
-推荐用 `uv` 创建虚拟环境。
+注意：
 
-## 安装
+- 程序依赖桌面会话，锁屏、无桌面远程环境、某些权限受限场景下可能无法截图
+- ROI 框选依赖 OpenCV 窗口能力，第一次部署建议在本机桌面环境直接操作
 
-```bash
-uv venv .venv
-source .venv/bin/activate
-UV_CACHE_DIR=.uv-cache uv pip install --python .venv/bin/python numpy opencv-python-headless mss lark-oapi
-```
+## 安装步骤
 
-如果是在 Windows 实验室电脑上，一般改成：
+1. 将项目目录复制到实验室电脑
+2. 打开 PowerShell，进入项目根目录
+3. 执行：
 
 ```powershell
-uv venv .venv
-.venv\Scripts\activate
-$env:UV_CACHE_DIR=".uv-cache"
-uv pip install --python .venv\Scripts\python.exe numpy opencv-python-headless mss lark-oapi
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
 ```
 
-## 配置说明
+如果你确定最终使用飞书，也可以显式安装飞书依赖：
 
-主配置写在 [`feishu_screenshot_sender.py`](/Users/wangsiyuan/编程/小项目/自动截屏发送飞书/feishu_screenshot_sender.py) 的 `CONFIG` 里。
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Provider feishu
+```
 
-重点配置项：
+如果使用企业微信：
 
-- `APP_ID` / `APP_SECRET`：飞书应用凭据
-- `RECEIVE_ID_TYPE` / `RECEIVE_ID`：消息接收对象
-- `INTERVAL_SECONDS`：定时发送整屏截图的间隔
-- `ROI`：整屏截图区域，`None` 表示全屏
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Provider wecom
+```
+
+## 配置文件
+
+1. 复制模板：
+
+```powershell
+Copy-Item .\config.example.json .\config.local.json
+```
+
+2. 编辑 `config.local.json`
+
+推荐只改这几个字段：
+
+- `PUSH_PROVIDER`：`feishu` 或 `wecom`
+- `APP_ID` / `APP_SECRET` / `RECEIVE_ID_TYPE` / `RECEIVE_ID`：飞书使用
+- `WECOM_WEBHOOK_URL`：企业微信使用
+- `INTERVAL_SECONDS`：定时截图间隔
+- `SAVE_DIR`：截图落盘目录，默认 `runtime/screenshots`
+- `LOG_LEVEL`：建议先用 `INFO`
+
+ROI 相关字段：
+
+- `ROI`：整屏截图区域，可留 `null`
 - `CAMERA_ROI`：相机窗口区域
-- `SPOT_SEARCH_ROI`：激光亮点搜索区域
-- `DETECT_INTERVAL_SECONDS`：激光点检测频率
-- `INTENSITY_DROP_RATIO_THRESHOLD`：亮度下降阈值
-- `AREA_DROP_RATIO_THRESHOLD`：面积下降阈值
-- `ALERT_CONSECUTIVE_FRAMES`：连续异常多少帧后报警
-- `ALERT_COOLDOWN_SECONDS`：报警冷却时间
+- `SPOT_SEARCH_ROI`：激光亮点区域
 
-`CAMERA_ROI` 和 `SPOT_SEARCH_ROI` 可以不用手填，直接交互式框选。
+如果暂时不启用激光检测：
 
-## 交互式选择 ROI
+- `CAMERA_ROI` 和 `SPOT_SEARCH_ROI` 都保持 `null`
 
-第一次部署到实验室电脑时，建议先运行：
+如果启用激光检测：
 
-```bash
-python feishu_screenshot_sender.py --select-roi
+- `CAMERA_ROI` 和 `SPOT_SEARCH_ROI` 必须同时配置
+
+## 首次部署流程
+
+1. 安装依赖
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
 ```
 
-脚本会：
+2. 复制并填写配置
 
-1. 截取当前屏幕
-2. 让你框选 `CAMERA_ROI`
-3. 在相机窗口里继续框选 `SPOT_SEARCH_ROI`
-4. 把结果保存到 `config.local.json`
-
-之后正常运行时会自动读取 `config.local.json`，不需要再改代码。
-
-说明：
-
-- `CAMERA_ROI` 是相对于 `ROI` 截图结果的坐标
-- `SPOT_SEARCH_ROI` 是相对于 `CAMERA_ROI` 的坐标
-- 如果 `ROI` 保持 `None`，那就是相对于整屏截图
-
-## 正常运行
-
-```bash
-python feishu_screenshot_sender.py
+```powershell
+Copy-Item .\config.example.json .\config.local.json
 ```
 
-运行逻辑：
+3. 运行环境检查
 
-- 按 `INTERVAL_SECONDS` 发送一张整屏截图到飞书
-- 按 `DETECT_INTERVAL_SECONDS` 检查一次激光亮点
-- 检测到连续异常后，立刻发送报警文本和标注图
+```bat
+scripts\windows\check.bat
+```
 
-如果没有配置 `CAMERA_ROI` 和 `SPOT_SEARCH_ROI`，脚本仍然会保留原来的定时截图功能，只是不启用激光点检测。
+检查会验证：
 
-## 异常检测逻辑
+- 配置是否合法
+- 推送渠道依赖是否可用
+- 截图能力是否可用
+- ROI 是否能在当前截图中正确裁切
 
-当前版本的检测思路比较保守，优先追求稳定：
+4. 如果要启用激光检测，框选 ROI
 
-1. 在小范围 `SPOT_SEARCH_ROI` 内寻找最亮区域
-2. 建立一段正常状态的基线
-3. 监控亮点的面积和总亮度
-4. 当亮点连续多帧明显变暗、变小或消失时报警
+```bat
+scripts\windows\select_roi.bat
+```
 
-这比直接比较整张屏幕更适合实验场景，因为左侧曲线、时间戳和软件界面本身会变化。
+5. 发送一次验收截图
 
-## 输出文件
+```bat
+scripts\windows\send_once.bat
+```
 
-运行时会在 `SAVE_DIR` 下生成：
+验收标准：
 
-- 定时截图
-- 异常报警截图
-- `sender.log`
+- 群里收到一条文本和一张截图
+- 项目目录下生成 `runtime/sender.log`
+- 如果配置了 `SAVE_DIR`，截图文件落到对应目录
 
-如果用过交互式 ROI 选择，还会在项目根目录生成：
+6. 正式启动
 
-- `config.local.json`
+```bat
+scripts\windows\start.bat
+```
+
+## 日常运维
+
+### 启动
+
+```bat
+scripts\windows\start.bat
+```
+
+### 停止
+
+- 在运行窗口中按 `Ctrl + C`
+
+### 修改配置
+
+1. 停止程序
+2. 修改 `config.local.json`
+3. 如果改动了 ROI 或截图区域，重新执行：
+
+```bat
+scripts\windows\check.bat
+```
+
+### 重新框选 ROI
+
+```bat
+scripts\windows\select_roi.bat
+```
+
+### 查看日志
+
+默认日志文件：
+
+```text
+runtime/sender.log
+```
+
+日志会同时输出到终端和文件，启动时会打印：
+
+- 运行模式
+- 推送渠道
+- 截图间隔
+- 激光检测是否启用
+- 配置文件路径
+- 日志文件路径
+
+## 命令行接口
+
+项目正式入口是：
+
+```bash
+python -m screenshot_sender
+```
+
+支持的参数：
+
+- `--config <path>`：指定配置文件
+- `--check`：检查后退出
+- `--once`：发送一次截图后退出
+- `--select-roi`：交互式框选 ROI
+
+示例：
+
+```bash
+python -m screenshot_sender --config config.local.json --check
+python -m screenshot_sender --config config.local.json --once
+python -m screenshot_sender --config config.local.json --select-roi
+```
+
+## 常见故障排查
+
+### 1. 提示缺少依赖模块
+
+现象：
+
+- `缺少依赖模块: mss`
+- `缺少依赖模块: cv2`
+- `缺少依赖模块: lark_oapi`
+
+处理：
+
+- 重新运行 `scripts\windows\install.ps1`
+- 如果是飞书，确认安装时使用了 `-Provider feishu`，或者 `config.local.json` 中的 `PUSH_PROVIDER` 已正确填写
+
+### 2. `--check` 失败，提示 ROI 配置错误
+
+现象：
+
+- `CAMERA_ROI 和 SPOT_SEARCH_ROI 必须同时配置`
+- `SPOT_SEARCH_ROI 超出图像范围`
+
+处理：
+
+- 两个 ROI 要么都为空，要么都有效
+- 修改窗口布局后需要重新运行 `select_roi.bat`
+
+### 3. 可以启动，但收不到消息
+
+处理：
+
+- 先运行 `send_once.bat`
+- 检查 `PUSH_PROVIDER` 是否与凭据匹配
+- 飞书检查 `APP_ID`、`APP_SECRET`、`RECEIVE_ID_TYPE`、`RECEIVE_ID`
+- 企业微信检查 `WECOM_WEBHOOK_URL`
+- 查看 `runtime/sender.log` 中的发送失败信息
+
+### 4. 截图失败
+
+处理：
+
+- 确认当前用户处于已登录桌面会话
+- 确认程序运行时没有锁屏
+- 在本机桌面环境重新执行 `check.bat`
 
 ## 测试
 
-当前有一组基于合成图像的单元测试，覆盖：
+当前仓库包含单元测试，覆盖：
 
-- 正常亮点检测
-- 亮点变暗报警
-- 亮点变小报警
-- 亮点消失报警
-- 单帧异常恢复
-- 冷却时间抑制重复报警
-- 配置覆盖和 ROI 序列化
+- 激光亮点检测
+- 配置覆盖和默认回落
+- 推送渠道配置校验
+- CLI 的 `--check` / `--once` 基本行为
 
-运行：
+运行方式：
 
 ```bash
 python -m unittest tests/test_laser_spot_monitor.py -v
 ```
-
-## 建议的实际部署顺序
-
-1. 在实验室电脑装好 Python 和依赖
-2. 先确认飞书发送功能正常
-3. 运行 `python feishu_screenshot_sender.py --select-roi`
-4. 先在有人值守时观察一段时间，看是否误报
-5. 再根据实验画面微调阈值和检测频率
-
-## 已知限制
-
-- 当前 ROI 框选依赖 OpenCV 的窗口能力，建议在有桌面环境的实验室电脑上操作
-- 第一版默认假设激光亮点位置基本固定
-- 如果实验过程中亮点本来就会大幅漂移或周期性变暗，需要再做第二版策略

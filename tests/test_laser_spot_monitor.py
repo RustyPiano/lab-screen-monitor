@@ -1,10 +1,16 @@
+import json
 import unittest
+from hashlib import md5
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-import feishu_screenshot_sender as sender
+import screenshot_sender as sender
+import screenshot_sender.app as sender_app
+import screenshot_sender.common as sender_common
+import screenshot_sender.config as sender_config
 
 
 def make_spot_frame(
@@ -58,6 +64,16 @@ def prime_baseline(monitor: sender.LaserSpotMonitor) -> None:
     assert event.status == "baseline_ready"
 
 
+def make_base_config() -> dict:
+    return sender.build_runtime_config(sender.CONFIG)
+
+
+def write_config(path: Path, overrides: dict) -> None:
+    config = make_base_config()
+    config.update(overrides)
+    path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 class LaserSpotDetectorTests(unittest.TestCase):
     def test_detector_finds_bright_spot(self) -> None:
         detector = sender.LaserSpotDetector(
@@ -103,6 +119,147 @@ class ConfigOverrideTests(unittest.TestCase):
 
         self.assertEqual(runtime["CAMERA_ROI"], (11, 22, 33, 44))
         self.assertEqual(runtime["SPOT_SEARCH_ROI"], (5, 6, 7, 8))
+
+
+class ConfigLoadingTests(unittest.TestCase):
+    def test_explicit_config_path_has_priority_over_default_file(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            default_path = temp_root / "config.local.json"
+            explicit_path = temp_root / "custom.json"
+
+            write_config(default_path, {"PUSH_PROVIDER": "wecom", "WECOM_WEBHOOK_URL": "default"})
+            write_config(explicit_path, {"PUSH_PROVIDER": "wecom", "WECOM_WEBHOOK_URL": "explicit"})
+
+            with patch.object(sender_config, "CONFIG_OVERRIDE_PATH", default_path):
+                runtime = sender.load_runtime_config(explicit_path)
+
+        self.assertEqual(runtime["WECOM_WEBHOOK_URL"], "explicit")
+
+    def test_load_runtime_config_falls_back_to_defaults_when_default_missing(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            missing_default_path = Path(temp_dir) / "missing.json"
+            with patch.object(sender_config, "CONFIG_OVERRIDE_PATH", missing_default_path):
+                runtime = sender.load_runtime_config()
+
+        self.assertEqual(runtime["PUSH_PROVIDER"], sender.CONFIG["PUSH_PROVIDER"])
+        self.assertEqual(runtime["SAVE_DIR"], sender.CONFIG["SAVE_DIR"])
+
+
+class MessengerConfigTests(unittest.TestCase):
+    def test_validate_config_accepts_feishu_runtime_config(self) -> None:
+        cfg = make_base_config()
+        cfg["APP_ID"] = "cli_test"
+        cfg["APP_SECRET"] = "secret"
+        cfg["RECEIVE_ID"] = "oc_test"
+        sender.validate_config(cfg)
+
+    def test_validate_config_requires_wecom_webhook(self) -> None:
+        cfg = make_base_config()
+        cfg["PUSH_PROVIDER"] = "wecom"
+        cfg["WECOM_WEBHOOK_URL"] = ""
+
+        with self.assertRaisesRegex(ValueError, "WECOM_WEBHOOK_URL"):
+            sender.validate_config(cfg)
+
+    def test_validate_config_accepts_wecom_webhook(self) -> None:
+        cfg = make_base_config()
+        cfg["PUSH_PROVIDER"] = "wecom"
+        cfg["WECOM_WEBHOOK_URL"] = "https://example.invalid/wecom-webhook"
+        sender.validate_config(cfg)
+
+    def test_build_messenger_returns_wecom_instance(self) -> None:
+        cfg = make_base_config()
+        cfg["PUSH_PROVIDER"] = "wecom"
+        cfg["WECOM_WEBHOOK_URL"] = "https://example.invalid/wecom-webhook"
+
+        messenger = sender.build_messenger(cfg)
+
+        self.assertIsInstance(messenger, sender.WecomMessenger)
+
+
+class WecomMessengerTests(unittest.TestCase):
+    def test_build_image_payload_contains_base64_and_md5(self) -> None:
+        image_bytes = b"fake-image-bytes"
+        with TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "image.png"
+            image_path.write_bytes(image_bytes)
+
+            payload = sender.WecomMessenger.build_image_payload(str(image_path))
+
+        self.assertEqual(payload["msgtype"], "image")
+        self.assertEqual(payload["image"]["md5"], md5(image_bytes).hexdigest())
+        self.assertEqual(payload["image"]["base64"], "ZmFrZS1pbWFnZS1ieXRlcw==")
+
+
+class CliTests(unittest.TestCase):
+    def test_main_check_returns_zero_when_runtime_check_succeeds(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            config_path = temp_root / "config.local.json"
+            write_config(
+                config_path,
+                {
+                    "PUSH_PROVIDER": "wecom",
+                    "WECOM_WEBHOOK_URL": "https://example.invalid/wecom-webhook",
+                    "SAVE_DIR": str(temp_root / "screenshots"),
+                },
+            )
+
+            with patch.object(sender_app, "setup_logging", return_value=temp_root / "sender.log"):
+                with patch.object(sender_app, "check_runtime") as mock_check:
+                    exit_code = sender.main(["--check", "--config", str(config_path)])
+
+        self.assertEqual(exit_code, 0)
+        mock_check.assert_called_once()
+
+    def test_main_once_sends_single_screenshot_when_detection_disabled(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            config_path = temp_root / "config.local.json"
+            write_config(
+                config_path,
+                {
+                    "PUSH_PROVIDER": "wecom",
+                    "WECOM_WEBHOOK_URL": "https://example.invalid/wecom-webhook",
+                    "SAVE_DIR": str(temp_root / "screenshots"),
+                },
+            )
+
+            messenger = MagicMock()
+            frame = np.zeros((10, 10, 3), dtype=np.uint8)
+
+            with patch.object(sender_app, "setup_logging", return_value=temp_root / "sender.log"):
+                with patch.object(sender_app, "build_messenger", return_value=messenger):
+                    with patch.object(sender_app.ScreenCapturer, "capture", return_value=frame):
+                        with patch.object(sender_app.ScreenCapturer, "save", return_value=None):
+                            exit_code = sender.main(["--once", "--config", str(config_path)])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(messenger.send_image.call_count, 1)
+        self.assertEqual(messenger.send_text.call_count, 1)
+
+    def test_main_check_returns_one_for_invalid_detection_config(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            config_path = temp_root / "config.local.json"
+            write_config(
+                config_path,
+                {
+                    "PUSH_PROVIDER": "wecom",
+                    "WECOM_WEBHOOK_URL": "https://example.invalid/wecom-webhook",
+                    "CAMERA_ROI": [0, 0, 10, 10],
+                },
+            )
+
+            with patch.object(sender_app, "setup_logging", return_value=temp_root / "sender.log"):
+                with self.assertLogs(sender_common.LOGGER_NAME, level="ERROR") as logs:
+                    exit_code = sender.main(["--check", "--config", str(config_path)])
+
+        self.assertEqual(exit_code, 1)
+        self.assertTrue(
+            any("CAMERA_ROI 和 SPOT_SEARCH_ROI 必须同时配置" in message for message in logs.output)
+        )
 
 
 class LaserSpotMonitorTests(unittest.TestCase):

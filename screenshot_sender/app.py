@@ -25,7 +25,7 @@ from .config import (
     resolve_config_path,
     validate_config,
 )
-from .image_ops import annotate_frame, crop_frame
+from .image_ops import crop_frame
 from .laser import (
     LaserSpotDetector,
     LaserSpotMonitor,
@@ -92,16 +92,9 @@ def send_scheduled_screenshot(
     cfg: dict,
     latest_detection_note: str,
 ) -> None:
+    del latest_detection_note
     image_path = make_output_path(cfg["SAVE_DIR"], prefix="screenshot")
-    note_lines = [
-        f"time: {now_str()}",
-        "mode: scheduled screenshot",
-    ]
-    if latest_detection_note:
-        note_lines.append(latest_detection_note)
-
-    vis = annotate_frame(frame, note_lines)
-    ScreenCapturer.save(vis, image_path)
+    ScreenCapturer.save(frame, image_path)
 
     if cfg["SEND_TEXT_BEFORE_IMAGE"]:
         messenger.send_text(f"{cfg['TEXT_PREFIX']}\n时间: {now_str()}")

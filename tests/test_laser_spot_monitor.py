@@ -433,6 +433,31 @@ class LaserSpotMonitorTests(unittest.TestCase):
         self.assertEqual(final_event.consecutive_anomalies, 0)
         self.assertEqual(monitor.consecutive_anomalies, 0)
 
+    def test_recovery_clears_cooldown_for_next_alert_cycle(self) -> None:
+        monitor = build_monitor()
+        prime_baseline(monitor)
+
+        for ts in range(5, 8):
+            event, _ = monitor.process_camera_frame(
+                make_spot_frame(radius=0, peak=20),
+                now_timestamp=float(ts),
+            )
+        self.assertTrue(event.should_alert)
+        self.assertIsNotNone(monitor.last_alert_timestamp)
+
+        event, _ = monitor.process_camera_frame(make_spot_frame(), now_timestamp=8.0)
+        self.assertEqual(event.status, "normal")
+        self.assertIsNone(monitor.last_alert_timestamp)
+
+        for ts in (9.0, 10.0, 11.0):
+            event, _ = monitor.process_camera_frame(
+                make_spot_frame(radius=0, peak=20),
+                now_timestamp=ts,
+            )
+
+        self.assertEqual(event.status, "alert")
+        self.assertTrue(event.should_alert)
+
 
 class CommonAndImageOpsTests(unittest.TestCase):
     def test_make_output_path_includes_microseconds(self) -> None:

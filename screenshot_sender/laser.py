@@ -11,7 +11,6 @@ except ImportError:
 
 from .common import now_str
 from .image_ops import (
-    annotate_frame,
     crop_frame,
     draw_cross,
     draw_rectangle,
@@ -244,6 +243,8 @@ class LaserSpotMonitor:
 
         was_anomaly = self.consecutive_anomalies > 0
         self.consecutive_anomalies = 0
+        if self.last_alert_timestamp is not None:
+            self.last_alert_timestamp = None
         if measurement.is_detected:
             self.baseline_area = (
                 self.baseline_ema_alpha * measurement.spot_area
@@ -287,18 +288,7 @@ def build_alert_visual(
     )
     canvas[:, :camera_vis.shape[1]] = camera_vis
     canvas[:, camera_vis.shape[1] + gap:] = debug_vis
-
-    lines = [
-        f"time: {now_str()}",
-        "mode: laser spot alert",
-        event.reason,
-    ]
-    if event.intensity_ratio is not None:
-        lines.append(f"intensity_ratio: {event.intensity_ratio:.1%}")
-    if event.area_ratio is not None:
-        lines.append(f"area_ratio: {event.area_ratio:.1%}")
-
-    return annotate_frame(canvas, lines)
+    return canvas
 
 
 def build_alert_text(event: SpotMonitorEvent) -> str:

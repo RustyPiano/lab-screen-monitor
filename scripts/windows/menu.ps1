@@ -10,15 +10,15 @@ $logPath     = Join-Path $projectRoot "runtime\sender.log"
 function Show-Menu {
     Clear-Host
     Write-Host "╔══════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║      自动截屏发送 - 操作菜单          ║" -ForegroundColor Cyan
+    Write-Host "║      自动截屏发送 - 操作菜单         ║" -ForegroundColor Cyan
     Write-Host "╠══════════════════════════════════════╣" -ForegroundColor Cyan
-    Write-Host "║  1. 启动（正式运行）                  ║"
-    Write-Host "║  2. 环境检查                          ║"
-    Write-Host "║  3. 重新框选 ROI 区域                 ║"
-    Write-Host "║  4. 发送一次测试截图                  ║"
-    Write-Host "║  5. 查看日志                          ║"
-    Write-Host "║  6. 重新安装 / 修改配置               ║"
-    Write-Host "║  0. 退出                              ║"
+    Write-Host "║  1. 启动（正式运行）                 ║"
+    Write-Host "║  2. 环境检查                         ║"
+    Write-Host "║  3. 重新框选 ROI 区域                ║"
+    Write-Host "║  4. 发送一次测试截图                 ║"
+    Write-Host "║  5. 查看日志                         ║"
+    Write-Host "║  6. 重新安装 / 修改配置              ║"
+    Write-Host "║  0. 退出                             ║"
     Write-Host "╚══════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
 }
